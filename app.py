@@ -1,12 +1,18 @@
 from flask import Flask
 from flask import request
 import os
+import shutil
 import random
 import string
 from urllib.request import urlretrieve
+from zipfile import ZipFile 
 
 from tflite_support.metadata_writers import image_classifier
 from tflite_support.metadata_writers import writer_utils
+import tensorflow as tf
+#specifically, we need tensorflow version 2.13.1 or lower, otherwise tflite will break
+assert tf.__version__.startswith('2')
+from mediapipe_model_maker import gesture_recognizer
 
 # Configure logging
 from logging.config import dictConfig
@@ -92,6 +98,72 @@ def addMetaDataImageSegmentation():
 
     # todo: remove the converted model file after a certain period of time
 
+# route for training a model for gesture recognition
+@app.post("/train/gesture-recognition")
+def trainGestureRecognition():
+    
+    # create a random directory
+    random_dir = ''.join(random.choices(string.ascii_lowercase + string.digits, k=12))
+    temp_dir = os.path.join('static', random_dir)
+    os.mkdir(temp_dir)
+    # get location of zipfile with images from the incoming HTTP request
+    zipfile_URL = request.json['zipFile']
+    zipfile_file = os.path.join(temp_dir, 'training_data')
+
+    # when testing, we are running inside a docker container on windows
+    # so we use host.docker.internal to access files from the host's localhost
+    # when deployed live, the URL we receive will not contain localhost and nothing happens here
+    zipfile_URL = zipfile_URL.replace("localhost", "host.docker.internal")
+        
+    app.logger.info('Retrieving zipfile from: %s', zipfile_URL)
+    urlretrieve(zipfile_URL, zipfile_file)
+
+    #unzip and delete zip
+    with ZipFile(zipfile_file, 'r') as zip_object:
+        zip_object.extractall(path=temp_dir) 
+    os.remove(zipfile_file)
+
+    # load the dataset, split the dataset: 80% for training, 10% for validation, and 10% for testing
+    data = gesture_recognizer.Dataset.from_folder(
+        dirname=temp_dir,
+        hparams=gesture_recognizer.HandDataPreprocessingParams()
+    )
+    train_data, rest_data = data.split(0.8)
+    validation_data, test_data = rest_data.split(0.5)
+
+    #train the model
+    export_path = os.path.join(temp_dir, "exported_model")
+    hparams = gesture_recognizer.HParams(export_dir=export_path)
+    options = gesture_recognizer.GestureRecognizerOptions(hparams=hparams)
+    model = gesture_recognizer.GestureRecognizer.create(
+        train_data=train_data,
+        validation_data=validation_data,
+        options=options
+    )
+
+    # Export to Tensorflow Lite Model to the export_path
+    model.export_model()
+
+    # create another random directory to store the exported model
+    random_dir2 = ''.join(random.choices(string.ascii_lowercase + string.digits, k=12))
+    result_dir = os.path.join('static', random_dir2)
+    os.mkdir(result_dir)
+
+    # move the trained model to new location for downloading
+    os.rename( os.path.join(export_path, "gesture_recognizer.task"),  os.path.join(result_dir, request.json['newModelFileName']) )
+
+    # delete temporary files
+    shutil.rmtree(temp_dir)
+
+    # Send a response, we are done
+    HOSTNAME = os.getenv("HOSTNAME")
+    export_model_url = HOSTNAME + "/static/" + random_dir2 + "/"  + request.json['newModelFileName']
+    app.logger.info('New model file available at : %s', export_model_url)
+    return {
+        "url": export_model_url 
+    }
+
+    # TODO remove exported model after a while
 
 if __name__ == '__main__':
     port = int(os.environ.get("PORT", 5000))  # Default to 5000 if not set

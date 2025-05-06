@@ -1,11 +1,12 @@
 # Use a slim Python 3.9 image
-FROM python:3.9-slim
+FROM python:3.10-slim
 
 # Install system dependencies needed for building Python packages
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
         build-essential \
         libusb-1.0-0 \
+        python3-opencv \
         && rm -rf /var/lib/apt/lists/*
 
 # Set a working directory
