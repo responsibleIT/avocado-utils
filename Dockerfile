@@ -1,5 +1,5 @@
 # Use a slim Python 3.9 image
-FROM python:3.10-slim
+FROM python:3.9-slim
 
 # Install system dependencies needed for building Python packages
 RUN apt-get update && \
