@@ -1,5 +1,5 @@
 ﻿Flask
 opencv-python
 tflite-support
-tensorflow==2.13.1
+tensorflow
 mediapipe-model-maker
